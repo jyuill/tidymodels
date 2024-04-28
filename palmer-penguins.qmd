@@ -1,0 +1,46 @@
+---
+title: "Palmer Penguins"
+author: JY
+date: Sys.Date()
+format: html
+editor: visual
+code-fold: true
+execute:
+  echo: true
+  error: false
+  warning: false
+---
+
+```{r}
+#| echo: FALSE
+library(tidyverse)
+library(tidymodels)
+theme_set(theme_light())
+```
+
+## Building a model for Palmer Penguins
+
+A classification model to distinguish male and female penguins. Purpose is to learn the ways of **tidymodels** package.
+
+## Explore Data
+
+```{r}
+library(palmerpenguins)
+
+str(penguins)
+penguins %>% count(species)
+penguins %>% count(island, species)
+penguins %>% count(sex)
+# for easy on-going ref
+peng <- penguins
+```
+
+```{r}
+#| fig-width: 12
+#| fig-height: 6
+
+peng |>
+  ggplot(aes(flipper_length_mm, bill_length_mm, color=sex, size=body_mass_g)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~species)
+```
