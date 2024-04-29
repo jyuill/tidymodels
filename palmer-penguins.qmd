@@ -32,15 +32,195 @@ penguins %>% count(species)
 penguins %>% count(island, species)
 penguins %>% count(sex)
 # for easy on-going ref
-peng <- penguins
+peng_df <- penguins
 ```
 
 ```{r}
 #| fig-width: 12
 #| fig-height: 6
 
-peng |>
+peng_df |>
   ggplot(aes(flipper_length_mm, bill_length_mm, color=sex, size=body_mass_g)) +
   geom_point(alpha = 0.7) +
   facet_wrap(~species)
 ```
+
+## Build a Model
+
+Using Tidy Models set of packages!
+
+1.  Split the data for training and testing purposes.
+2.  Use 'initial_split' functions, specifying strata = sex to ensure that both sexes are equally represented in each split of the data.
+3.  For performance evaluation, using bootstrap
+
+```{r}
+# drop some columns to simplify - won't need all these variables
+peng_df <- peng_df %>% select(-island, -year)
+# clean - remove NA records
+peng_df <- na.omit(peng_df)
+# check
+#anyNA(peng_df)
+```
+
+```{r}
+set.seed(123)
+# initial_split is used to identify the items for splitting 
+# initial_split default is 75/25 split for training/testing
+peng_split <- initial_split(peng_df, strata = sex)
+peng_train <- training(peng_split)
+peng_test <- testing(peng_split)
+
+# model performance
+set.seed(234)
+# using bootstrap resampling with replacement because small data set
+peng_boot <- bootstraps(peng_train)
+```
+
+### Model specification
+
+```{r}
+glm_spec <- logistic_reg() %>%
+  set_engine("glm")
+
+rf_spec <- rand_forest() %>%
+  set_mode("classification") %>% # since classification model, need mode
+  set_engine("ranger")
+```
+
+### Set up workflow
+
+```{r}
+peng_wf <- workflow() %>%
+  add_formula(sex ~ .) # predict sex using all the parameters
+peng_wf
+```
+
+Logistic regression model
+
+```{r}
+glm_rs <- peng_wf %>%
+  add_model(glm_spec) %>%
+  fit_resamples(
+    resamples = peng_boot, 
+    control = control_resamples(save_pred = TRUE, verbose = TRUE)
+  )
+```
+
+Random forest model
+
+```{r}
+rf_rs <- peng_wf %>%
+  add_model(rf_spec) %>%
+  fit_resamples(
+    resamples = peng_boot, 
+    control = control_resamples(save_pred = TRUE, verbose = TRUE)
+  )
+```
+
+## Evaluate Modeling
+
+```{r}
+collect_metrics(glm_rs)
+```
+
+Interpretation:
+
+-   accuracy: very high, with
+-   area under curve (auc): also very high
+
+```{r}
+collect_metrics(rf_rs)
+```
+
+Interpretation:
+
+-   very similar performance!
+
+### Conclusion
+
+When presented with two models with very similar performance, choose the one that is simpler, easier to explain. In this case: **logistic regression**.
+
+Confusion matrix
+
+```{r}
+glm_rs %>%
+  conf_mat_resampled()
+```
+
+Not really traditional confusion matrix, but you can see:
+
+-   high portion of correct prediction for female
+-   high portion of correct prediction for male
+-   moderate and similar portion of errors on both male and female
+
+```{r}
+glm_rs %>% 
+  collect_predictions() %>%
+  group_by(id) %>%
+  roc_curve(sex, .pred_female) %>%
+  autoplot()
+```
+
+Prettier version with ggplot
+
+```{r}
+glm_rs %>% 
+  collect_predictions() %>%
+  group_by(id) %>%
+  roc_curve(sex, .pred_female) %>%
+  ggplot(aes(x = 1-specificity, y = sensitivity, color = id)) +
+    geom_abline(lty = 2, color="gray80", linewidth = 1.5) +
+    geom_path(show.legend = FALSE, alpha = 0.6, size = 1.2) +
+    coord_equal() # for square plot
+```
+
+## Evaluate on Testing Data
+
+Precious resource that can only be used one time.
+
+```{r}
+peng_final <- peng_wf %>%
+  add_model(glm_spec) %>%
+  last_fit(peng_split)
+
+peng_final
+```
+
+```{r}
+collect_predictions(peng_final)
+```
+
+```{r}
+collect_predictions(peng_final) %>% conf_mat(sex, .pred_class)
+```
+
+Traditional confusion matrix - looks solid.
+
+```{r}
+peng_final$.workflow[[1]] %>%
+  tidy()
+```
+
+As odds ratios:
+
+```{r}
+peng_final$.workflow[[1]] %>%
+  tidy(exponentiate = TRUE) %>% arrange(estimate)
+```
+
+### Observations
+
+Looks like 'bill_depth_mm' is strongest predictor of sex.
+
+Let's look at chart - same as original chart but with **bill_depth_mm** on the x-axis:
+
+```{r}
+#| fig-width: 12
+#| fig-height: 6
+peng_df |>
+  ggplot(aes(bill_depth_mm, bill_length_mm, color=sex, size=body_mass_g)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~species)
+```
+
+Cleaner separation in sex than with flipper length - especially on Adeli.
